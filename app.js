@@ -5,7 +5,8 @@ const S = {
   view: "home",
   player: null,
   ready: false,
-  pendingPlay: false
+  pendingPlay: false,
+  wheel: { active: false, lastAngle: 0, accumulated: 0, lastMove: 0 }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -79,8 +80,6 @@ function loadPlayer(id, startImmediately = false) {
 
   S.pendingPlay = startImmediately;
   if (!S.player) {
-    // The player is intentionally visible. iOS Safari may block a 1x1/hidden
-    // YouTube player, while a visible player with controls can be played by the user.
     S.player = new YT.Player("yt", {
       width: "100%",
       height: "220",
@@ -199,6 +198,63 @@ $("select").onclick = () => { if (S.view === "home") toggle(); };
 $("play").onclick = toggle;
 $("next").onclick = next;
 $("prev").onclick = prev;
+
+// Rotate the click wheel to browse songs. Pointer Events cover mouse, touch and
+// Apple Pencil, while pointer capture keeps the gesture alive around the wheel.
+const wheel = document.querySelector(".wheel");
+if (wheel) {
+  wheel.style.touchAction = "none";
+
+  const wheelAngle = (event) => {
+    const rect = wheel.getBoundingClientRect();
+    return Math.atan2(
+      event.clientY - (rect.top + rect.height / 2),
+      event.clientX - (rect.left + rect.width / 2)
+    ) * 180 / Math.PI;
+  };
+
+  wheel.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button")) return;
+    S.wheel.active = true;
+    S.wheel.lastAngle = wheelAngle(event);
+    S.wheel.accumulated = 0;
+    S.wheel.lastMove = 0;
+    wheel.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  });
+
+  wheel.addEventListener("pointermove", (event) => {
+    if (!S.wheel.active || event.pointerId !== undefined && !wheel.hasPointerCapture?.(event.pointerId)) return;
+    const angle = wheelAngle(event);
+    let delta = angle - S.wheel.lastAngle;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    S.wheel.lastAngle = angle;
+    S.wheel.accumulated += delta;
+
+    const step = 28;
+    while (Math.abs(S.wheel.accumulated) >= step) {
+      if (S.wheel.accumulated > 0) {
+        next();
+        S.wheel.accumulated -= step;
+      } else {
+        prev();
+        S.wheel.accumulated += step;
+      }
+    }
+    event.preventDefault();
+  });
+
+  const stopWheel = (event) => {
+    if (!S.wheel.active) return;
+    S.wheel.active = false;
+    if (event.pointerId !== undefined) wheel.releasePointerCapture?.(event.pointerId);
+  };
+  wheel.addEventListener("pointerup", stopWheel);
+  wheel.addEventListener("pointercancel", stopWheel);
+  wheel.addEventListener("lostpointercapture", () => { S.wheel.active = false; });
+}
+
 $("add").onclick = () => {
   const input = $("url");
   if (input.value.trim()) {
